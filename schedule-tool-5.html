@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>📺 番組スケジュール調整</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0e1220; color: #e8eaf0; font-family: 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif; }
+  input, textarea, button { font-family: inherit; }
+  textarea { resize: vertical; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// ============================================================
+// Firebase REST API
+// ============================================================
+const FB_URL = "https://kawara-36-default-rtdb.asia-southeast1.firebasedatabase.app";
+
+async function fbGet(path) {
+  const res = await fetch(`${FB_URL}/${path}.json`);
+  return res.ok ? res.json() : null;
+}
+async function fbSet(path, data) {
+  await fetch(`${FB_URL}/${path}.json`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+async function fbPatch(path, data) {
+  await fetch(`${FB_URL}/${path}.json`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+// ============================================================
+// UTILS
+// ============================================================
+function toDateStr(y, m, d) {
+  return `${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+}
+function parseDate(str) {
+  const [y, m, d] = str.split("-").map(Number);
+  return { y, m, d };
+}
+function getDaysInMonth(year, month) { return new Date(year, month, 0).getDate(); }
+function getFirstDayOfWeek(year, month) { return new Date(year, month - 1, 1).getDay(); }
+function formatDateJP(str) {
+  const { y, m, d } = parseDate(str);
+  const days = ["日","月","火","水","木","金","土"];
+  const dow = new Date(y, m - 1, d).getDay();
+  return `${m}/${d}(${days[dow]})`;
+}
+
+// ============================================================
+// STYLES
+// ============================================================
+const inputStyle = {
+  width: "100%", background: "rgba(255,255,255,0.07)",
+  border: "1px solid rgba(255,255,255,0.15)", borderRadius: "8px",
+  color: "#fff", padding: "8px 12px", fontSize: "13px", outline: "none",
+};
+const primaryBtn = {
+  background: "#2a6fbf", border: "none", borderRadius: "7px",
+  color: "#fff", padding: "8px 14px", fontSize: "13px",
+  fontWeight: "700", cursor: "pointer",
+};
+const navBtnStyle = {
+  background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+  borderRadius: "6px", color: "#fff", width: "32px", height: "32px",
+  cursor: "pointer", fontSize: "18px", display: "flex",
+  alignItems: "center", justifyContent: "center",
+};
+
+// ============================================================
+// CALENDAR
+// ============================================================
+function Calendar({ year, month, markedDays={}, onDayClick, selectedDays=[], highlightDays=[] }) {
+  const days = getDaysInMonth(year, month);
+  const firstDow = getFirstDayOfWeek(year, month);
+  const cells = [];
+  for (let i = 0; i < firstDow; i++) cells.push(null);
+  for (let d = 1; d <= days; d++) cells.push(d);
+  const today = new Date();
+  const todayStr = toDateStr(today.getFullYear(), today.getMonth()+1, today.getDate());
+
+  return (
+    <div style={{ width: "100%" }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:"2px", marginBottom:"4px" }}>
+        {["日","月","火","水","木","金","土"].map((d,i) => (
+          <div key={d} style={{ textAlign:"center", fontSize:"11px", fontWeight:"700",
+            color: i===0?"#e05555":i===6?"#4477cc":"#888", padding:"4px 0" }}>{d}</div>
+        ))}
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:"3px" }}>
+        {cells.map((d, i) => {
+          if (!d) return <div key={`e-${i}`} />;
+          const str = toDateStr(year, month, d);
+          const dow = (firstDow + d - 1) % 7;
+          const isNG = selectedDays.includes(str);
+          const isCandidate = highlightDays.includes(str);
+          const mark = markedDays[str];
+          const isToday = str === todayStr;
+          const isPast = str < todayStr;
+          let bg = "transparent";
+          let color = dow===0?"#e05555":dow===6?"#4477cc":"#e8eaf0";
+          let border = "1px solid transparent";
+          let fontWeight = "400";
+          let opacity = "1";
+          if (isPast && !isNG && !isCandidate) { color = dow===0?"#7a3333":dow===6?"#2a4466":"#444"; }
+          if (isNG) { bg="#e05555"; color="#fff"; fontWeight="700"; border="1px solid #c03333"; opacity="1"; }
+          else if (isCandidate) { bg="#2a6fbf"; color="#fff"; fontWeight="700"; border="1px solid #1a4f9f"; opacity="1"; }
+          else if (isToday) { border="2px solid #2a6fbf"; fontWeight="700"; color="#fff"; }
+          return (
+            <button key={str} onClick={() => onDayClick && onDayClick(str)}
+              style={{ background:bg, color, border, borderRadius:"6px", padding:"6px 2px",
+                fontSize:"13px", fontWeight, cursor:"pointer", textAlign:"center",
+                transition:"all 0.12s", aspectRatio:"1", display:"flex", alignItems:"center",
+                justifyContent:"center", flexDirection:"column", lineHeight:1 }}>
+              <span>{d}</span>
+              {mark && <span style={{ fontSize:"7px", marginTop:"2px", opacity:0.9 }}>{mark}</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MonthNav({ year, month, onChange }) {
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:"12px", marginBottom:"12px" }}>
+      <button onClick={() => { const d=new Date(year,month-2); onChange(d.getFullYear(),d.getMonth()+1); }} style={navBtnStyle}>‹</button>
+      <span style={{ fontWeight:"700", fontSize:"16px", flex:1, textAlign:"center", letterSpacing:"0.1em" }}>{year}年{month}月</span>
+      <button onClick={() => { const d=new Date(year,month); onChange(d.getFullYear(),d.getMonth()+1); }} style={navBtnStyle}>›</button>
+    </div>
+  );
+}
+
+// ============================================================
+// DIRECTOR VIEW
+// ============================================================
+function DirectorView({ data, reload }) {
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth()+1);
+  const [newMember, setNewMember] = useState("");
+  const [newCandidateLabel, setNewCandidateLabel] = useState("");
+  const [newCandidateTime, setNewCandidateTime] = useState("");
+  const [newCandidatePlace, setNewCandidatePlace] = useState("");
+  const [newCandidateMemo, setNewCandidateMemo] = useState("");
+  const [selectedForCandidate, setSelectedForCandidate] = useState([]);
+  const [tab, setTab] = useState("calendar");
+  const [editingMember, setEditingMember] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const candidates = data.candidates ? Object.values(data.candidates).sort((a,b)=>a.date.localeCompare(b.date)) : [];
+  const ngDays = data.ngDays || {};
+  const members = data.members || [];
+  const confirmedDates = candidates.filter(c=>c.status==="confirmed").map(c=>c.date);
+  const proposedDates = candidates.filter(c=>c.status==="proposed").map(c=>c.date);
+
+  const allNGDays = {};
+  Object.values(ngDays).forEach(days => (days||[]).forEach(d => { allNGDays[d]=(allNGDays[d]||0)+1; }));
+  const markedDays = {};
+  Object.entries(allNGDays).forEach(([d,count]) => { if(count>0) markedDays[d]=`NG:${count}`; });
+
+  async function addCandidates() {
+    if (selectedForCandidate.length===0) return;
+    setSaving(true);
+    const updates = {};
+    selectedForCandidate.forEach(date => {
+      const id = `c_${date}`;
+      updates[id] = { id, date, label: newCandidateLabel||"ロケ候補", time: newCandidateTime, place: newCandidatePlace, memo: newCandidateMemo, status: "proposed" };
+    });
+    await fbPatch("candidates", updates);
+    setSelectedForCandidate([]); setNewCandidateLabel(""); setNewCandidateTime(""); setNewCandidatePlace(""); setNewCandidateMemo("");
+    await reload(); setSaving(false);
+  }
+
+  async function confirmCandidate(id) {
+    setSaving(true);
+    await fbPatch(`candidates/${id}`, { status: "confirmed" });
+    await reload(); setSaving(false);
+  }
+
+  async function removeCandidate(id) {
+    setSaving(true);
+    await fetch(`${FB_URL}/candidates/${id}.json`, { method: "DELETE" });
+    await reload(); setSaving(false);
+  }
+
+  async function addMember() {
+    if (!newMember.trim()||members.includes(newMember.trim())) return;
+    setSaving(true);
+    await fbSet("members", [...members, newMember.trim()]);
+    setNewMember(""); await reload(); setSaving(false);
+  }
+
+  async function removeMember(name) {
+    setSaving(true);
+    await fbSet("members", members.filter(m=>m!==name));
+    await fetch(`${FB_URL}/ngDays/${encodeURIComponent(name)}.json`, { method: "DELETE" });
+    await fetch(`${FB_URL}/notes/${encodeURIComponent(name)}.json`, { method: "DELETE" });
+    await reload(); setSaving(false);
+  }
+
+  async function renameMember(original, newName) {
+    const trimmed = newName.trim();
+    if (!trimmed||(trimmed!==original&&members.includes(trimmed))) return;
+    setSaving(true);
+    const newMembers = members.map(m=>m===original?trimmed:m);
+    await fbSet("members", newMembers);
+    const oldNG = ngDays[original];
+    if (oldNG) {
+      await fbSet(`ngDays/${trimmed}`, oldNG);
+      await fetch(`${FB_URL}/ngDays/${encodeURIComponent(original)}.json`, { method: "DELETE" });
+    }
+    const oldNote = (data.notes||{})[original];
+    if (oldNote) {
+      await fbSet(`notes/${trimmed}`, oldNote);
+      await fetch(`${FB_URL}/notes/${encodeURIComponent(original)}.json`, { method: "DELETE" });
+    }
+    setEditingMember(null); await reload(); setSaving(false);
+  }
+
+  const candidatesByMonth = candidates.filter(c => {
+    const { y, m } = parseDate(c.date); return y===year&&m===month;
+  });
+
+  return (
+    <div>
+      {saving && (
+        <div style={{ background:"rgba(42,111,191,0.2)", borderRadius:"8px", padding:"8px 12px",
+          marginBottom:"12px", fontSize:"12px", color:"#7ab", textAlign:"center" }}>保存中...</div>
+      )}
+      <div style={{ display:"flex", gap:"4px", marginBottom:"20px" }}>
+        {[["calendar","📅 カレンダー"],["members","👥 メンバー"],["ng","📋 NG集計"]].map(([key,label]) => (
+          <button key={key} onClick={()=>setTab(key)} style={{
+            flex:1, padding:"8px 4px", borderRadius:"8px", border:"none",
+            background: tab===key?"#2a6fbf":"rgba(255,255,255,0.07)",
+            color: tab===key?"#fff":"#aaa", fontWeight: tab===key?"700":"400",
+            cursor:"pointer", fontSize:"12px", transition:"all 0.15s",
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {tab==="calendar" && (
+        <div>
+          <MonthNav year={year} month={month} onChange={(y,m)=>{setYear(y);setMonth(m);}} />
+          <div style={{ marginBottom:"12px", background:"rgba(42,111,191,0.12)", borderRadius:"10px", padding:"12px" }}>
+            <div style={{ fontSize:"12px", color:"#7ab", marginBottom:"8px", fontWeight:"700" }}>ロケ候補日を選択（複数可）</div>
+            <input value={newCandidateLabel} onChange={e=>setNewCandidateLabel(e.target.value)}
+              placeholder="タイトル例：第1回ロケ" style={{ ...inputStyle, marginBottom:"6px" }} />
+            <div style={{ display:"flex", gap:"6px", marginBottom:"6px" }}>
+              <input value={newCandidateTime} onChange={e=>setNewCandidateTime(e.target.value)}
+                placeholder="時間例：10:00〜" style={{ ...inputStyle, flex:1 }} />
+              <input value={newCandidatePlace} onChange={e=>setNewCandidatePlace(e.target.value)}
+                placeholder="場所" style={{ ...inputStyle, flex:1 }} />
+            </div>
+            <input value={newCandidateMemo} onChange={e=>setNewCandidateMemo(e.target.value)}
+              placeholder="メモ（任意）" style={inputStyle} />
+            <div style={{ display:"flex", gap:"8px", marginTop:"8px", flexWrap:"wrap" }}>
+              {selectedForCandidate.map(d => (
+                <span key={d} style={{ background:"#2a6fbf", color:"#fff", padding:"3px 8px", borderRadius:"20px", fontSize:"12px" }}>
+                  {formatDateJP(d)}
+                </span>
+              ))}
+            </div>
+            {selectedForCandidate.length>0 && (
+              <button onClick={addCandidates} style={{ ...primaryBtn, marginTop:"8px", width:"100%" }}>
+                候補日として登録 ({selectedForCandidate.length}日)
+              </button>
+            )}
+          </div>
+          <Calendar year={year} month={month} markedDays={markedDays}
+            onDayClick={str => setSelectedForCandidate(prev=>prev.includes(str)?prev.filter(d=>d!==str):[...prev,str])}
+            selectedDays={selectedForCandidate}
+            highlightDays={[...proposedDates,...confirmedDates]} />
+          <div style={{ display:"flex", gap:"12px", marginTop:"12px", flexWrap:"wrap" }}>
+            {[["#2a6fbf","候補日(提案済)"],["#22aa66","確定日"],["#e05555","選択中"]].map(([c,l]) => (
+              <div key={l} style={{ display:"flex", alignItems:"center", gap:"4px", fontSize:"11px", color:"#aaa" }}>
+                <div style={{ width:"12px", height:"12px", borderRadius:"3px", background:c }} />{l}
+              </div>
+            ))}
+          </div>
+          {candidatesByMonth.length>0 && (
+            <div style={{ marginTop:"16px" }}>
+              <div style={{ fontSize:"12px", color:"#7ab", fontWeight:"700", marginBottom:"8px" }}>{year}年{month}月の候補日</div>
+              {candidatesByMonth.map(c => {
+                const ngCount = Object.values(ngDays).filter(days=>(days||[]).includes(c.date)).length;
+                const ngNames = Object.entries(ngDays).filter(([,days])=>(days||[]).includes(c.date)).map(([n])=>n);
+                return (
+                  <div key={c.id} style={{
+                    background: c.status==="confirmed"?"rgba(34,170,102,0.15)":"rgba(255,255,255,0.05)",
+                    border:`1px solid ${c.status==="confirmed"?"#22aa66":"rgba(255,255,255,0.1)"}`,
+                    borderRadius:"8px", padding:"10px 12px", marginBottom:"8px",
+                    display:"flex", alignItems:"center", gap:"8px",
+                  }}>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontWeight:"700", fontSize:"14px" }}>{formatDateJP(c.date)}</div>
+                      <div style={{ fontSize:"11px", color:"#aaa", marginTop:"2px" }}>
+                        {c.label}
+                        {c.time && <span style={{ marginLeft:"6px" }}>🕐 {c.time}</span>}
+                        {c.place && <span style={{ marginLeft:"6px" }}>📍 {c.place}</span>}
+                      </div>
+                      {c.memo && <div style={{ fontSize:"11px", color:"#888", marginTop:"2px" }}>📝 {c.memo}</div>}
+                      <div style={{ fontSize:"11px", color:"#aaa", marginTop:"2px" }}>
+                        NG: {ngCount}名/{members.length}名
+                        {ngCount>0 && <span style={{ color:"#e05555", marginLeft:"4px" }}>({ngNames.join(", ")})</span>}
+                      </div>
+                    </div>
+                    {c.status!=="confirmed" && (
+                      <button onClick={()=>confirmCandidate(c.id)} style={{ ...primaryBtn, fontSize:"11px", padding:"4px 10px" }}>確定</button>
+                    )}
+                    {c.status==="confirmed" && <span style={{ color:"#22aa66", fontSize:"12px", fontWeight:"700" }}>✓確定</span>}
+                    <button onClick={()=>removeCandidate(c.id)} style={{ background:"none", border:"none", color:"#888", cursor:"pointer", fontSize:"16px" }}>×</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab==="members" && (
+        <div>
+          <div style={{ fontSize:"12px", color:"#7ab", fontWeight:"700", marginBottom:"12px" }}>メンバー管理</div>
+          <div style={{ display:"flex", gap:"8px", marginBottom:"16px" }}>
+            <input value={newMember} onChange={e=>setNewMember(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&addMember()} placeholder="名前を入力"
+              style={{ ...inputStyle, flex:1 }} />
+            <button onClick={addMember} style={{ ...primaryBtn, whiteSpace:"nowrap" }}>追加</button>
+          </div>
+          {members.map(name => (
+            <div key={name} style={{
+              background:"rgba(255,255,255,0.05)", borderRadius:"8px",
+              padding:"10px 14px", marginBottom:"6px",
+              display:"flex", alignItems:"center", gap:"8px",
+            }}>
+              {editingMember?.original===name ? (
+                <>
+                  <input autoFocus value={editingMember.value}
+                    onChange={e=>setEditingMember({...editingMember,value:e.target.value})}
+                    onKeyDown={e=>{
+                      if(e.key==="Enter") renameMember(name,editingMember.value);
+                      if(e.key==="Escape") setEditingMember(null);
+                    }}
+                    style={{ ...inputStyle, flex:1 }} />
+                  <button onClick={()=>renameMember(name,editingMember.value)}
+                    style={{ ...primaryBtn, fontSize:"12px", padding:"5px 10px", whiteSpace:"nowrap" }}>保存</button>
+                  <button onClick={()=>setEditingMember(null)}
+                    style={{ background:"none", border:"none", color:"#888", cursor:"pointer", fontSize:"13px" }}>キャンセル</button>
+                </>
+              ) : (
+                <>
+                  <span style={{ fontWeight:"600", flex:1 }}>{name}</span>
+                  <span style={{ fontSize:"12px", color:"#888" }}>NG: {(ngDays[name]||[]).length}日</span>
+                  <button onClick={()=>setEditingMember({original:name,value:name})}
+                    style={{ background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)",
+                      borderRadius:"5px", color:"#aaa", cursor:"pointer", fontSize:"11px", padding:"3px 8px" }}>編集</button>
+                  <button onClick={()=>removeMember(name)}
+                    style={{ background:"none", border:"none", color:"#888", cursor:"pointer", fontSize:"16px" }}>×</button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab==="ng" && (
+        <div>
+          <div style={{ fontSize:"12px", color:"#7ab", fontWeight:"700", marginBottom:"12px" }}>NG日集計</div>
+          {candidates.length===0 ? (
+            <div style={{ color:"#888", fontSize:"13px", textAlign:"center", padding:"30px 0" }}>候補日が登録されていません</div>
+          ) : candidates.map(c => {
+            const ngNames = Object.entries(ngDays).filter(([,days])=>(days||[]).includes(c.date)).map(([n])=>n);
+            const okNames = members.filter(m=>!ngNames.includes(m));
+            return (
+              <div key={c.id} style={{
+                background:"rgba(255,255,255,0.04)",
+                border:`1px solid ${c.status==="confirmed"?"#22aa66":"rgba(255,255,255,0.08)"}`,
+                borderRadius:"10px", padding:"12px 14px", marginBottom:"10px",
+              }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"8px" }}>
+                  <div>
+                    <span style={{ fontWeight:"700", fontSize:"15px" }}>{formatDateJP(c.date)}</span>
+                    <span style={{ fontSize:"11px", color:"#888", marginLeft:"8px" }}>{c.label}</span>
+                  </div>
+                  {c.status==="confirmed" && <span style={{ color:"#22aa66", fontSize:"12px", fontWeight:"700" }}>✓確定</span>}
+                </div>
+                <div style={{ display:"flex", gap:"8px", flexWrap:"wrap" }}>
+                  {okNames.map(m => (
+                    <span key={m} style={{ background:"rgba(34,170,102,0.2)", color:"#22aa66", padding:"2px 8px", borderRadius:"20px", fontSize:"11px" }}>○ {m}</span>
+                  ))}
+                  {ngNames.map(m => (
+                    <span key={m} style={{ background:"rgba(224,85,85,0.2)", color:"#e05555", padding:"2px 8px", borderRadius:"20px", fontSize:"11px" }}>✗ {m}</span>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// TALENT VIEW
+// ============================================================
+function TalentView({ data, reload }) {
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth()+1);
+  const [selectedMember, setSelectedMember] = useState(null);
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const members = data.members || [];
+  const ngDays = data.ngDays || {};
+  const candidates = data.candidates ? Object.values(data.candidates).sort((a,b)=>a.date.localeCompare(b.date)) : [];
+  const myNGDays = selectedMember ? (ngDays[selectedMember]||[]) : [];
+  const allCandidateDates = candidates.map(c=>c.date);
+
+  async function toggleNG(str) {
+    if (!selectedMember) return;
+    setSaving(true);
+    const current = ngDays[selectedMember]||[];
+    const updated = current.includes(str)?current.filter(d=>d!==str):[...current,str];
+    await fbSet(`ngDays/${selectedMember}`, updated);
+    await reload(); setSaving(false);
+  }
+
+  async function saveNote() {
+    if (!selectedMember) return;
+    await fbSet(`notes/${selectedMember}`, note);
+  }
+
+  useEffect(() => {
+    if (selectedMember) setNote((data.notes||{})[selectedMember]||"");
+  }, [selectedMember]);
+
+  if (!selectedMember) return (
+    <div>
+      <div style={{ fontSize:"14px", color:"#aaa", marginBottom:"20px", textAlign:"center" }}>あなたの名前を選んでください</div>
+      <div style={{ display:"flex", flexDirection:"column", gap:"8px" }}>
+        {members.map(name => (
+          <button key={name} onClick={()=>setSelectedMember(name)} style={{
+            background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.12)",
+            borderRadius:"10px", padding:"14px 16px", color:"#fff", cursor:"pointer",
+            textAlign:"left", display:"flex", justifyContent:"space-between", alignItems:"center",
+            fontSize:"15px", fontWeight:"600",
+          }}>
+            <span>{name}</span>
+            <span style={{ fontSize:"12px", color:"#888", fontWeight:"400" }}>NG登録: {(ngDays[name]||[]).length}日</span>
+          </button>
+        ))}
+      </div>
+      {members.length===0 && (
+        <div style={{ color:"#888", textAlign:"center", padding:"40px 0", fontSize:"13px" }}>Dさんにメンバー登録を依頼してください</div>
+      )}
+    </div>
+  );
+
+  return (
+    <div>
+      {saving && (
+        <div style={{ background:"rgba(42,111,191,0.2)", borderRadius:"8px", padding:"8px 12px",
+          marginBottom:"12px", fontSize:"12px", color:"#7ab", textAlign:"center" }}>保存中...</div>
+      )}
+      <div style={{ display:"flex", alignItems:"center", gap:"10px", marginBottom:"16px" }}>
+        <button onClick={()=>setSelectedMember(null)} style={{
+          background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)",
+          borderRadius:"6px", color:"#aaa", padding:"4px 10px", cursor:"pointer", fontSize:"13px",
+        }}>← 戻る</button>
+        <span style={{ fontWeight:"700", fontSize:"16px" }}>{selectedMember}</span>
+      </div>
+      <div style={{ background:"rgba(224,85,85,0.1)", border:"1px solid rgba(224,85,85,0.3)",
+        borderRadius:"8px", padding:"10px 12px", marginBottom:"14px", fontSize:"12px", color:"#e08888" }}>
+        NG日（出演できない日）をタップ。もう一度タップで解除。
+      </div>
+      <MonthNav year={year} month={month} onChange={(y,m)=>{setYear(y);setMonth(m);}} />
+      <Calendar year={year} month={month} onDayClick={toggleNG}
+        selectedDays={myNGDays} highlightDays={allCandidateDates} />
+      <div style={{ display:"flex", gap:"12px", marginTop:"12px", flexWrap:"wrap" }}>
+        {[["#e05555","NG日"],["#2a6fbf","ロケ候補日"]].map(([c,l]) => (
+          <div key={l} style={{ display:"flex", alignItems:"center", gap:"4px", fontSize:"11px", color:"#aaa" }}>
+            <div style={{ width:"12px", height:"12px", borderRadius:"3px", background:c }} />{l}
+          </div>
+        ))}
+      </div>
+      {myNGDays.length>0 && (
+        <div style={{ marginTop:"16px" }}>
+          <div style={{ fontSize:"12px", color:"#7ab", fontWeight:"700", marginBottom:"8px" }}>登録済みNG日 ({myNGDays.length}日)</div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:"6px" }}>
+            {[...myNGDays].sort().map(d => (
+              <button key={d} onClick={()=>toggleNG(d)} style={{
+                background:"rgba(224,85,85,0.2)", border:"1px solid rgba(224,85,85,0.4)",
+                borderRadius:"20px", color:"#e05555", padding:"4px 10px", fontSize:"12px", cursor:"pointer",
+              }}>{formatDateJP(d)} ×</button>
+            ))}
+          </div>
+        </div>
+      )}
+      {candidates.length>0 && (
+        <div style={{ marginTop:"16px" }}>
+          <div style={{ fontSize:"12px", color:"#7ab", fontWeight:"700", marginBottom:"8px" }}>候補日との照合</div>
+          {candidates.map(c => {
+            const isNG = myNGDays.includes(c.date);
+            return (
+              <div key={c.id} style={{
+                padding:"8px 10px", borderRadius:"7px",
+                background: isNG?"rgba(224,85,85,0.1)":"rgba(34,170,102,0.08)",
+                marginBottom:"4px", fontSize:"13px",
+              }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ fontWeight:"600" }}>{formatDateJP(c.date)} {c.label}</span>
+                  <span style={{ fontWeight:"700", color: isNG?"#e05555":"#22aa66", marginLeft:"8px", whiteSpace:"nowrap" }}>{isNG?"✗ NG":"○ OK"}</span>
+                </div>
+                {(c.time||c.place) && (
+                  <div style={{ fontSize:"11px", color:"#aaa", marginTop:"3px" }}>
+                    {c.time && <span>🕐 {c.time}　</span>}
+                    {c.place && <span>📍 {c.place}</span>}
+                  </div>
+                )}
+                {c.memo && <div style={{ fontSize:"11px", color:"#888", marginTop:"2px" }}>📝 {c.memo}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div style={{ marginTop:"16px" }}>
+        <div style={{ fontSize:"12px", color:"#7ab", fontWeight:"700", marginBottom:"6px" }}>備考（Dへのメモ）</div>
+        <textarea value={note} onChange={e=>setNote(e.target.value)} onBlur={saveNote}
+          placeholder="例：午前中は別件あり、等" rows={3}
+          style={{ ...inputStyle, lineHeight:"1.6" }} />
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// ROOT
+// ============================================================
+const DEFAULT_MEMBERS = ["お侍ちゃん", "奥村AN", "神山AN", "徳岡AN"];
+
+function App() {
+  const [data, setData] = useState(null);
+  const [mode, setMode] = useState("select");
+  const [error, setError] = useState(null);
+  const pollRef = useRef(null);
+
+  async function loadData() {
+    try {
+      const raw = await fbGet("");
+      if (!raw) {
+        // 初回：デフォルトメンバーを書き込む
+        await fbSet("members", DEFAULT_MEMBERS);
+        setData({ members: DEFAULT_MEMBERS, candidates: {}, ngDays: {}, notes: {} });
+      } else {
+        setData({
+          members: raw.members || DEFAULT_MEMBERS,
+          candidates: raw.candidates || {},
+          ngDays: raw.ngDays || {},
+          notes: raw.notes || {},
+        });
+      }
+    } catch(e) {
+      setError("Firebaseへの接続に失敗しました。ネットワークを確認してください。");
+    }
+  }
+
+  useEffect(() => {
+    loadData();
+    // 30秒ごとに自動更新
+    pollRef.current = setInterval(loadData, 30000);
+    return () => clearInterval(pollRef.current);
+  }, []);
+
+  if (error) return (
+    <div style={{ minHeight:"100vh", background:"#0e1220", color:"#e8eaf0", display:"flex", alignItems:"center", justifyContent:"center", padding:"20px" }}>
+      <div style={{ textAlign:"center" }}>
+        <div style={{ fontSize:"32px", marginBottom:"12px" }}>⚠️</div>
+        <div style={{ fontSize:"14px", color:"#e05555" }}>{error}</div>
+        <button onClick={loadData} style={{ ...primaryBtn, marginTop:"16px" }}>再試行</button>
+      </div>
+    </div>
+  );
+
+  if (!data) return (
+    <div style={{ minHeight:"100vh", background:"#0e1220", color:"#e8eaf0", display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <div style={{ textAlign:"center" }}>
+        <div style={{ fontSize:"24px", marginBottom:"8px" }}>📺</div>
+        <div style={{ fontSize:"13px", color:"#888" }}>読み込み中...</div>
+      </div>
+    </div>
+  );
+
+  const candidates = data.candidates ? Object.values(data.candidates) : [];
+  const confirmedCount = candidates.filter(c=>c.status==="confirmed").length;
+  const proposedCount = candidates.filter(c=>c.status==="proposed").length;
+
+  return (
+    <div style={{ minHeight:"100vh", background:"#0e1220", color:"#e8eaf0",
+      fontFamily:"'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif",
+      display:"flex", flexDirection:"column", alignItems:"center" }}>
+      <div style={{ width:"100%", background:"rgba(255,255,255,0.03)",
+        borderBottom:"1px solid rgba(255,255,255,0.07)", padding:"14px 20px",
+        display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div>
+          <div style={{ fontWeight:"800", fontSize:"15px", letterSpacing:"0.05em" }}>📺 番組スケジュール調整</div>
+          <div style={{ fontSize:"11px", color:"#888", marginTop:"2px" }}>
+            候補: {proposedCount}件　確定: {confirmedCount}件　メンバー: {(data.members||[]).length}名
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:"8px", alignItems:"center" }}>
+          <button onClick={loadData} style={{
+            background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)",
+            borderRadius:"6px", color:"#888", padding:"4px 8px", cursor:"pointer", fontSize:"11px",
+          }}>↺ 更新</button>
+          {mode!=="select" && (
+            <button onClick={()=>setMode("select")} style={{
+              background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)",
+              borderRadius:"7px", color:"#aaa", padding:"5px 12px", cursor:"pointer", fontSize:"12px",
+            }}>切替</button>
+          )}
+        </div>
+      </div>
+
+      <div style={{ width:"100%", maxWidth:"480px", padding:"20px 16px" }}>
+        {mode==="select" && (
+          <div>
+            <div style={{ textAlign:"center", marginBottom:"30px" }}>
+              <div style={{ fontSize:"13px", color:"#888" }}>あなたのロールを選んでください</div>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:"12px" }}>
+              <button onClick={()=>setMode("director")} style={{
+                background:"linear-gradient(135deg,rgba(42,111,191,0.3),rgba(42,111,191,0.15))",
+                border:"1px solid rgba(42,111,191,0.5)", borderRadius:"14px",
+                padding:"24px 20px", color:"#fff", cursor:"pointer", textAlign:"left",
+              }}>
+                <div style={{ fontSize:"24px", marginBottom:"8px" }}>🎬</div>
+                <div style={{ fontWeight:"800", fontSize:"18px" }}>D・スタッフ</div>
+                <div style={{ fontSize:"12px", color:"#9ab", marginTop:"4px" }}>候補日登録・確定・メンバー管理</div>
+              </button>
+              <button onClick={()=>setMode("talent")} style={{
+                background:"linear-gradient(135deg,rgba(224,85,85,0.2),rgba(224,85,85,0.08))",
+                border:"1px solid rgba(224,85,85,0.35)", borderRadius:"14px",
+                padding:"24px 20px", color:"#fff", cursor:"pointer", textAlign:"left",
+              }}>
+                <div style={{ fontSize:"24px", marginBottom:"8px" }}>🎤</div>
+                <div style={{ fontWeight:"800", fontSize:"18px" }}>演者・出演者</div>
+                <div style={{ fontSize:"12px", color:"#e09898", marginTop:"4px" }}>NG日をカレンダーでタップ</div>
+              </button>
+            </div>
+          </div>
+        )}
+        {mode==="director" && <DirectorView data={data} reload={loadData} />}
+        {mode==="talent" && <TalentView data={data} reload={loadData} />}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
