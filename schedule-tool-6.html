@@ -157,6 +157,8 @@ function DirectorView({ data, reload }) {
   const [newCandidateTime, setNewCandidateTime] = useState("");
   const [newCandidatePlace, setNewCandidatePlace] = useState("");
   const [newCandidateMemo, setNewCandidateMemo] = useState("");
+  const [newCandidateEndTime, setNewCandidateEndTime] = useState("");
+  const [newCandidateTargets, setNewCandidateTargets] = useState([]); // 対象演者
   const [selectedForCandidate, setSelectedForCandidate] = useState([]);
   const [tab, setTab] = useState("calendar");
   const [editingMember, setEditingMember] = useState(null);
@@ -180,10 +182,10 @@ function DirectorView({ data, reload }) {
     const updates = {};
     selectedForCandidate.forEach(date => {
       const id = `c_${date}`;
-      updates[id] = { id, date, label: newCandidateLabel||"ロケ候補", time: newCandidateTime, place: newCandidatePlace, memo: newCandidateMemo, status: "proposed" };
+      updates[id] = { id, date, label: newCandidateLabel||"ロケ候補", time: newCandidateTime, endTime: newCandidateEndTime, place: newCandidatePlace, memo: newCandidateMemo, targets: newCandidateTargets.length>0 ? newCandidateTargets : members, status: "proposed" };
     });
     await fbPatch("candidates", updates);
-    setSelectedForCandidate([]); setNewCandidateLabel(""); setNewCandidateTime(""); setNewCandidatePlace(""); setNewCandidateMemo("");
+    setSelectedForCandidate([]); setNewCandidateLabel(""); setNewCandidateTime(""); setNewCandidateEndTime(""); setNewCandidatePlace(""); setNewCandidateMemo(""); setNewCandidateTargets([]);
     await reload(); setSaving(false);
   }
 
@@ -274,8 +276,24 @@ function DirectorView({ data, reload }) {
               <input value={newCandidatePlace} onChange={e=>setNewCandidatePlace(e.target.value)}
                 placeholder="場所" style={{ ...inputStyle, flex:1 }} />
             </div>
+            <div style={{ display:"flex", gap:"6px", marginBottom:"6px" }}>
+              <input value={newCandidateEndTime} onChange={e=>setNewCandidateEndTime(e.target.value)}
+                placeholder="解散予定時刻例：18:00" style={{ ...inputStyle, flex:1 }} />
+            </div>
             <input value={newCandidateMemo} onChange={e=>setNewCandidateMemo(e.target.value)}
-              placeholder="メモ（任意）" style={inputStyle} />
+              placeholder="メモ（任意）" style={{ ...inputStyle, marginBottom:"6px" }} />
+            <div style={{ fontSize:"11px", color:"#7ab", fontWeight:"700", marginBottom:"6px" }}>対象演者（未選択で全員）</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:"6px", marginBottom:"4px" }}>
+              {members.map(name => {
+                const checked = newCandidateTargets.includes(name);
+                return (
+                  <button key={name} onClick={()=>setNewCandidateTargets(prev=>checked?prev.filter(m=>m!==name):[...prev,name])}
+                    style={{ background: checked?"#2a6fbf":"rgba(255,255,255,0.07)", border:`1px solid ${checked?"#2a6fbf":"rgba(255,255,255,0.2)"}`, borderRadius:"20px", color: checked?"#fff":"#aaa", padding:"4px 10px", fontSize:"12px", cursor:"pointer" }}>
+                    {checked?"✓ ":""}{name}
+                  </button>
+                );
+              })}
+            </div>
             <div style={{ display:"flex", gap:"8px", marginTop:"8px", flexWrap:"wrap" }}>
               {selectedForCandidate.map(d => (
                 <span key={d} style={{ background:"#2a6fbf", color:"#fff", padding:"3px 8px", borderRadius:"20px", fontSize:"12px" }}>
@@ -322,10 +340,25 @@ function DirectorView({ data, reload }) {
                           <input value={editingCandidate.place} onChange={e=>setEditingCandidate({...editingCandidate,place:e.target.value})}
                             placeholder="場所" style={{ ...inputStyle, flex:1 }} />
                         </div>
+                        <input value={editingCandidate.endTime||""} onChange={e=>setEditingCandidate({...editingCandidate,endTime:e.target.value})}
+                          placeholder="解散予定時刻" style={{ ...inputStyle, marginBottom:"6px" }} />
                         <input value={editingCandidate.memo} onChange={e=>setEditingCandidate({...editingCandidate,memo:e.target.value})}
-                          placeholder="メモ" style={{ ...inputStyle, marginBottom:"8px" }} />
+                          placeholder="メモ" style={{ ...inputStyle, marginBottom:"6px" }} />
+                        <div style={{ fontSize:"11px", color:"#7ab", fontWeight:"700", marginBottom:"6px" }}>対象演者</div>
+                        <div style={{ display:"flex", flexWrap:"wrap", gap:"6px", marginBottom:"8px" }}>
+                          {members.map(name => {
+                            const tgts = editingCandidate.targets||members;
+                            const checked = tgts.includes(name);
+                            return (
+                              <button key={name} onClick={()=>setEditingCandidate({...editingCandidate,targets:checked?tgts.filter(m=>m!==name):[...tgts,name]})}
+                                style={{ background:checked?"#2a6fbf":"rgba(255,255,255,0.07)", border:`1px solid ${checked?"#2a6fbf":"rgba(255,255,255,0.2)"}`, borderRadius:"20px", color:checked?"#fff":"#aaa", padding:"4px 10px", fontSize:"12px", cursor:"pointer" }}>
+                                {checked?"✓ ":""}{name}
+                              </button>
+                            );
+                          })}
+                        </div>
                         <div style={{ display:"flex", gap:"8px" }}>
-                          <button onClick={()=>updateCandidate(c.id,{label:editingCandidate.label,time:editingCandidate.time,place:editingCandidate.place,memo:editingCandidate.memo})}
+                          <button onClick={()=>updateCandidate(c.id,{label:editingCandidate.label,time:editingCandidate.time,endTime:editingCandidate.endTime||"",place:editingCandidate.place,memo:editingCandidate.memo,targets:editingCandidate.targets||members})}
                             style={{ ...primaryBtn, flex:1, fontSize:"12px" }}>保存</button>
                           <button onClick={()=>setEditingCandidate(null)}
                             style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:"7px", color:"#aaa", padding:"8px 14px", fontSize:"12px", cursor:"pointer" }}>キャンセル</button>
@@ -337,12 +370,15 @@ function DirectorView({ data, reload }) {
                           <div style={{ fontWeight:"700", fontSize:"14px" }}>{formatDateJP(c.date)}</div>
                           <div style={{ fontSize:"11px", color:"#aaa", marginTop:"2px" }}>
                             {c.label}
-                            {c.time && <span style={{ marginLeft:"6px" }}>🕐 {c.time}</span>}
+                            {c.time && <span style={{ marginLeft:"6px" }}>🕐 {c.time}{c.endTime?`〜${c.endTime}`:""}</span>}
                             {c.place && <span style={{ marginLeft:"6px" }}>📍 {c.place}</span>}
                           </div>
                           {c.memo && <div style={{ fontSize:"11px", color:"#888", marginTop:"2px" }}>📝 {c.memo}</div>}
+                          {c.targets && c.targets.length<members.length && (
+                            <div style={{ fontSize:"11px", color:"#7ab", marginTop:"2px" }}>👤 {c.targets.join(", ")}</div>
+                          )}
                           <div style={{ fontSize:"11px", color:"#aaa", marginTop:"2px" }}>
-                            NG: {ngCount}名/{members.length}名
+                            NG: {ngCount}名/{(c.targets||members).length}名
                             {ngCount>0 && <span style={{ color:"#e05555", marginLeft:"4px" }}>({ngNames.join(", ")})</span>}
                           </div>
                         </div>
@@ -352,7 +388,7 @@ function DirectorView({ data, reload }) {
                           )}
                           {c.status==="confirmed" && <span style={{ color:"#22aa66", fontSize:"12px", fontWeight:"700" }}>✓確定</span>}
                           <div style={{ display:"flex", gap:"4px" }}>
-                            <button onClick={()=>setEditingCandidate({id:c.id,label:c.label||"",time:c.time||"",place:c.place||"",memo:c.memo||""})}
+                            <button onClick={()=>setEditingCandidate({id:c.id,label:c.label||"",time:c.time||"",endTime:c.endTime||"",place:c.place||"",memo:c.memo||"",targets:c.targets||members})}
                               style={{ background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:"5px", color:"#aaa", cursor:"pointer", fontSize:"11px", padding:"3px 8px" }}>編集</button>
                             <button onClick={()=>removeCandidate(c.id)} style={{ background:"none", border:"none", color:"#888", cursor:"pointer", fontSize:"16px" }}>×</button>
                           </div>
@@ -465,7 +501,7 @@ function TalentView({ data, reload }) {
   const ngDays = data.ngDays || {};
   const candidates = data.candidates ? Object.values(data.candidates).sort((a,b)=>a.date.localeCompare(b.date)) : [];
   const myNGDays = selectedMember ? (ngDays[selectedMember]||[]) : [];
-  const allCandidateDates = candidates.map(c=>c.date);
+  const allCandidateDates = candidates.filter(c=>!c.targets||c.targets.includes(selectedMember)).map(c=>c.date);
 
   async function toggleNG(str) {
     if (!selectedMember) return;
@@ -547,10 +583,10 @@ function TalentView({ data, reload }) {
           </div>
         </div>
       )}
-      {candidates.length>0 && (
+      {candidates.filter(c=>!c.targets||c.targets.includes(selectedMember)).length>0 && (
         <div style={{ marginTop:"16px" }}>
           <div style={{ fontSize:"12px", color:"#7ab", fontWeight:"700", marginBottom:"8px" }}>候補日との照合</div>
-          {candidates.map(c => {
+          {candidates.filter(c=>!c.targets||c.targets.includes(selectedMember)).map(c => {
             const isNG = myNGDays.includes(c.date);
             return (
               <div key={c.id} style={{
@@ -562,9 +598,9 @@ function TalentView({ data, reload }) {
                   <span style={{ fontWeight:"600" }}>{formatDateJP(c.date)} {c.label}</span>
                   <span style={{ fontWeight:"700", color: isNG?"#e05555":"#22aa66", marginLeft:"8px", whiteSpace:"nowrap" }}>{isNG?"✗ NG":"○ OK"}</span>
                 </div>
-                {(c.time||c.place) && (
+                {(c.time||c.endTime||c.place) && (
                   <div style={{ fontSize:"11px", color:"#aaa", marginTop:"3px" }}>
-                    {c.time && <span>🕐 {c.time}　</span>}
+                    {c.time && <span>🕐 {c.time}{c.endTime?`〜${c.endTime}`:""} 　</span>}
                     {c.place && <span>📍 {c.place}</span>}
                   </div>
                 )}
